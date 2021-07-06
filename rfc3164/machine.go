@@ -2,6 +2,7 @@ package rfc3164
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/influxdata/go-syslog/v3"
@@ -93,6 +94,34 @@ func (m *machine) text() []byte {
 	return m.data[m.pb:m.p]
 }
 
+func (m *machine) check_year() bool {
+	if (m.p)+4 == (m.pe) {
+		return false
+	}
+	c := m.p
+	for i := 0; i < 3; i++ {
+		if !m.is_digit(c) {
+			return false
+		}
+		c++
+	}
+	if (m.data)[c+1] != 32 {
+		return false
+	}
+	str := string((m.data)[m.p : m.p+4])
+	m.yyyy, _ = strconv.Atoi(str)
+	m.p = m.p + 4
+
+	return true
+}
+
+func (m *machine) is_digit(c int) bool {
+	if 48 <= (m.data)[c] && (m.data)[c] <= 57 {
+		return true
+	}
+	return false
+}
+
 // Parse parses the input byte array as a RFC3164 syslog message.
 func (m *machine) Parse(input []byte) (syslog.Message, error) {
 	m.data = input
@@ -102,6 +131,7 @@ func (m *machine) Parse(input []byte) (syslog.Message, error) {
 	m.eof = len(input)
 	m.err = nil
 	output := &syslogMessage{}
+	var dt []byte
 
 	{
 		m.cs = start
@@ -1070,13 +1100,21 @@ func (m *machine) Parse(input []byte) (syslog.Message, error) {
 			goto _testEof10
 		}
 	stCase10:
-		if (m.data)[(m.p)] == 32 {
+		if (m.data)[(m.p)] == 32 { // space
 			goto st11
 		}
 		goto tr7
-	st11:
+
+	st11: // time starts
 		if (m.p)++; (m.p) == (m.pe) {
 			goto _testEof11
+		}
+		// check for year
+		if m.check_year() {
+			if (m.p)++; (m.p) == (m.pe) {
+				goto _testEof11
+			}
+			//m.pb = m.p
 		}
 	stCase11:
 		if (m.data)[(m.p)] == 50 {
@@ -1159,8 +1197,13 @@ func (m *machine) Parse(input []byte) (syslog.Message, error) {
 		}
 		goto st0
 	tr35:
+		dt = m.text()
+		if m.yyyy > 0 {
+			// D = "Sep 28 2020 08:37:41"
+			dt = append(dt[:7], dt[12:]...)
+		}
 
-		if t, e := time.Parse(time.Stamp, string(m.text())); e != nil {
+		if t, e := time.Parse(time.Stamp, string(dt)); e != nil {
 			m.err = fmt.Errorf("%s [col %d]", e, m.p)
 			(m.p)--
 
